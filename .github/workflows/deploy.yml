@@ -27,18 +27,6 @@ jobs:
         run: npm run build
         working-directory: functions
 
-      - name: Deploy to Firebase
-        uses: firebase/firebase-tools@v1.2.0
-        with:
-          args: deploy --only functions
-        env:
-          FIREBASE_SERVICE_ACCOUNT_XINGLONG_D2: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_XINGLONG_D2 }}
-          # Alternatively using FIREBASE_TOKEN if preferred, but Service Account is better.
-          # We expect the user to set FIREBASE_SERVICE_ACCOUNT_XINGLONG_D2
-          # Note: The action 'w9jds/firebase-action' is common but 'firebase-tools' can be run directly via npx or similar.
-          # However, the most robust way is creating a standardized step with 'firebase-tools' installed or using a specific action.
-          # Let's use the 'w9jds/firebase-action' which is very popular for this.
-
       # Rewriting the deploy step to use the popular community action for simplicity and reliability
       - name: Deploy to Firebase (Action)
         uses: w9jds/firebase-action@master

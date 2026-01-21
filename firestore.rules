@@ -1,0 +1,16 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 允許 'users' 集合中的文件在沒有身份驗證的情況下讀取
+    // 但寫入仍然需要身份驗證
+    match /users/{userId} {
+      allow read, write: if true; // 任何人都可以讀取
+    }
+
+    // 對於所有其他文件，讀取和寫入都需要身份驗證
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

@@ -65,10 +65,59 @@ interface Registration {
   created_at: admin.firestore.Timestamp;
 }
 
-// Get all users from Firestore
+type UserRole = "admin" | "general" | "guest";
+type UserTeam = "admin" | "platform" | "finance" | "venue" | "supplies";
+
+interface UserInfo {
+  id?: string;
+  name: string;
+  email: string;
+  community_code: string;
+  created_at: admin.firestore.Timestamp;
+  role: UserRole;
+  team?: UserTeam;
+  totp_secret?: string;
+}
+
+const verifyAuthToken = async (
+  request: import("firebase-functions/https").Request,
+): Promise<admin.auth.DecodedIdToken> => {
+  const authHeader = request.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    throw new Error("Missing or invalid Authorization header");
+  }
+
+  const idToken = authHeader.split("Bearer ")[1];
+
+  try {
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    return decodedToken;
+  } catch (error) {
+    logger.error("Token verification failed:", error);
+    throw new Error("Invalid or expired token");
+  }
+};
+
+// Get all users from Firestore (requires authentication)
 export const getFirestoreData = onRequest(async (request, response) => {
   return corsHandler(request, response, async () => {
     try {
+      // Verify authentication token
+      let decodedToken: admin.auth.DecodedIdToken;
+      try {
+        decodedToken = await verifyAuthToken(request);
+      } catch (authError) {
+        response.status(401).send({
+          success: false,
+          message:
+            authError instanceof Error
+              ? authError.message
+              : "Authentication failed",
+        });
+        return;
+      }
+
       const db = admin.firestore();
 
       // 取得 users collection 的所有文件
@@ -80,27 +129,48 @@ export const getFirestoreData = onRequest(async (request, response) => {
         ...doc.data(),
       }));
 
-      logger.info(`Retrieved ${users.length} users from Firestore`);
+      logger.info(
+        `Retrieved ${users.length} users from Firestore by user: ${decodedToken.email}`,
+      );
 
       // 回傳資料
       response.send({
+        success: true,
         count: users.length,
         users: users,
         message: "Successfully retrieved all users",
       });
     } catch (error) {
       logger.error("Error getting users:", error);
-      response.status(500).send({ error: "Internal server error" });
+      response.status(500).send({
+        success: false,
+        message: "Internal server error",
+      });
     }
   });
 });
 
-// Upload and process Excel application form
+// Upload and process Excel application form (requires authentication)
 export const uploadApplicationForm = onRequest(async (request, response) => {
   return corsHandler(request, response, async () => {
     // Only allow POST requests
     if (request.method !== "POST") {
       response.status(405).send({ error: "Method not allowed" });
+      return;
+    }
+
+    // Verify authentication token
+    let decodedToken: admin.auth.DecodedIdToken;
+    try {
+      decodedToken = await verifyAuthToken(request);
+    } catch (authError) {
+      response.status(401).send({
+        success: false,
+        message:
+          authError instanceof Error
+            ? authError.message
+            : "Authentication failed",
+      });
       return;
     }
 
@@ -116,7 +186,9 @@ export const uploadApplicationForm = onRequest(async (request, response) => {
         return;
       }
 
-      logger.info(`Processing Excel file: ${fileName || "unknown"}`);
+      logger.info(
+        `Processing Excel file: ${fileName || "unknown"} by user: ${decodedToken.email}`,
+      );
 
       // Decode Base64 to buffer
       const buffer = Buffer.from(fileBase64, "base64");
@@ -282,6 +354,87 @@ export const uploadApplicationForm = onRequest(async (request, response) => {
         success: false,
         message: "處理 Excel 檔案時發生錯誤，請檢查檔案格式",
         processedCount: 0,
+      });
+    }
+  });
+});
+
+// Get user info by email (requires authentication)
+export const getUserInfo = onRequest(async (request, response) => {
+  return corsHandler(request, response, async () => {
+    try {
+      // Verify authentication token
+      let decodedToken: admin.auth.DecodedIdToken;
+      try {
+        decodedToken = await verifyAuthToken(request);
+      } catch (authError) {
+        response.status(401).send({
+          success: false,
+          message:
+            authError instanceof Error
+              ? authError.message
+              : "Authentication failed",
+        });
+        return;
+      }
+
+      const email = request.query.email as string;
+
+      if (!email) {
+        response.status(400).send({
+          success: false,
+          message: "Missing email parameter",
+        });
+        return;
+      }
+
+      // Optional: Only allow users to query their own info
+      // Uncomment the following if you want to restrict access
+      // if (decodedToken.email !== email) {
+      //   response.status(403).send({
+      //     success: false,
+      //     message: "You can only access your own user info",
+      //   });
+      //   return;
+      // }
+
+      const db = admin.firestore();
+
+      // 查詢 users collection 中符合 email 的使用者
+      const usersQuery = await db
+        .collection("users")
+        .where("email", "==", email)
+        .get();
+
+      if (usersQuery.empty) {
+        response.status(404).send({
+          success: false,
+          message: `User with email ${email} not found`,
+        });
+        return;
+      }
+
+      // 取得第一個符合的使用者資料
+      const userDoc = usersQuery.docs[0];
+      const userInfo: UserInfo = {
+        id: userDoc.id,
+        ...userDoc.data(),
+      } as UserInfo;
+
+      logger.info(
+        `Retrieved user info for email: ${email} by user: ${decodedToken.email}`,
+      );
+
+      response.send({
+        success: true,
+        data: userInfo,
+        message: "Successfully retrieved user info",
+      });
+    } catch (error) {
+      logger.error("Error getting user info:", error);
+      response.status(500).send({
+        success: false,
+        message: "Internal server error",
       });
     }
   });
